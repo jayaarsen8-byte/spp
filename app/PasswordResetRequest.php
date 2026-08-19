@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class PasswordResetRequest extends Model
 {
+    protected $table = 'password_reset_requests';
     protected $fillable = ['user_id', 'status', 'reviewed_by', 'rejection_reason', 'requested_at', 'reviewed_at'];
     protected $casts = ['requested_at' => 'datetime', 'reviewed_at' => 'datetime'];
 
