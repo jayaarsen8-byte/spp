@@ -17,12 +17,21 @@ class StockService
     public function addStock($productId, $quantity, $type, $userId, $reference = null, $note = null)
     {
         return DB::transaction(function () use ($productId, $quantity, $type, $userId, $reference, $note) {
-            $stock = Stock::lockForUpdate()->firstOrCreate(
-                ['product_id' => $productId],
-                ['quantity' => 0]
-            );
+            // lock the specific product stock row for update
+            $stock = Stock::where('product_id', $productId)->lockForUpdate()->first();
 
-            $stock->quantity += $quantity;
+            if (!$stock) {
+                $stock = Stock::create(['product_id' => $productId, 'quantity' => 0]);
+            }
+
+            $newQty = $stock->quantity + $quantity;
+
+            // Prevent negative stock
+            if ($newQty < 0) {
+                throw new \Exception("Insufficient stock for product_id {$productId}");
+            }
+
+            $stock->quantity = $newQty;
             $stock->save();
 
             StockMovement::create([
@@ -40,6 +49,10 @@ class StockService
 
     public function reduceStock($productId, $quantity, $type, $userId, $reference = null, $note = null)
     {
+        if ($quantity <= 0) {
+            throw new \InvalidArgumentException('Quantity to reduce must be positive');
+        }
+
         return $this->addStock($productId, -$quantity, $type, $userId, $reference, $note);
     }
 
