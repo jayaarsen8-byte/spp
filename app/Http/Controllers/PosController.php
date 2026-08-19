@@ -14,6 +14,7 @@ use App\Receivable;
 use App\Services\SaleCalculationService;
 use App\Services\StockService;
 use App\Services\AuditLogService;
+use App\Requests\SaleRequest as OldSaleRequest;
 use App\Http\Requests\SaleRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -86,8 +87,9 @@ class PosController extends Controller
 
             $invoiceNumber = 'INV-' . date('YmdHis');
             $customer = null;
-            if ($validated['customer_id']) {
-                $customer = Customer::findOrFail($validated['customer_id']);
+            $customerId = $validated['customer_id'] ?? null;
+            if ($customerId) {
+                $customer = Customer::findOrFail($customerId);
             }
 
             $saleData = [
@@ -115,11 +117,7 @@ class PosController extends Controller
                     $itemData['selling_unit_price']
                 );
 
-                $stock = $this->stockService->getStock($product->id);
-                if (!$stock || $stock->quantity < $calculation['quantity']) {
-                    throw new \Exception("Insufficient stock for {$product->name}");
-                }
-
+                // Defer stock validation to StockService reduceStock which will atomically enforce availability
                 $items[] = [
                     'product_id' => $product->id,
                     'quantity' => $calculation['quantity'],
@@ -144,12 +142,19 @@ class PosController extends Controller
             $saleData['subtotal_normal'] = round($totalNormal, 2);
             $saleData['total_discount'] = round($totalDiscount, 2);
             $saleData['grand_total'] = round($grandTotal, 2);
-            $saleData['payment_amount'] = round($validated['payment_amount'], 2);
+            $saleData['payment_amount'] = round($validated['payment_amount'] ?? 0, 2);
+            $saleData['receivable_amount'] = 0;
+            $saleData['change_amount'] = 0;
 
-            if ($validated['payment_amount'] > $saleData['grand_total']) {
-                $saleData['change_amount'] = round($validated['payment_amount'] - $saleData['grand_total'], 2);
-            } elseif ($validated['payment_amount'] < $saleData['grand_total']) {
-                $saleData['receivable_amount'] = round($saleData['grand_total'] - $validated['payment_amount'], 2);
+            if ($saleData['payment_amount'] > $saleData['grand_total']) {
+                $saleData['change_amount'] = round($saleData['payment_amount'] - $saleData['grand_total'], 2);
+            } elseif ($saleData['payment_amount'] < $saleData['grand_total']) {
+                $saleData['receivable_amount'] = round($saleData['grand_total'] - $saleData['payment_amount'], 2);
+            }
+
+            // require a customer when receivable exists
+            if ($saleData['receivable_amount'] > 0 && !$customer) {
+                throw new \Exception('Customer is required when there is an outstanding receivable.');
             }
 
             $sale = Sale::create($saleData);
